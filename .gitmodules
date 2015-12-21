@@ -1,0 +1,6 @@
+[submodule "glove"]
+	path = glove
+	url = https://github.com/CBIConsulting/glove.git
+[submodule "json"]
+	path = json
+	url = https://github.com/CBIConsulting/json.git

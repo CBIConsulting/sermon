@@ -1,0 +1,33 @@
+{
+    "tbp": 1000,
+    "sap": 100,
+    "max_redirects": 10,
+    "check_certificates": true,
+    "timeout" : 20,
+    "verbosity": 3, 
+    "notify" : [
+	{
+	    "type": "mail",
+	    "to": "my_email@my_server.com"
+	},
+	{
+	    "type": "desktop"
+	},
+	{
+	    "type": "cli"
+	}
+    ],
+    "services": [
+	{
+	    "url": "http://google.com"
+	},
+	{
+	    "url": "http://my-website.com"
+	},
+	{
+	    "url": "https://my-other-website.com:9837/",
+	    "timeout": 15,
+	    "check_certificate" : false
+	}
+    ]
+}

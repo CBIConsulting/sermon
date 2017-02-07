@@ -11,8 +11,7 @@
 * @author Gaspar Fernández <blakeyed@totaki.com>
 * @version
 * @date 15 dic 2015
-* Historial de cambios:
-*
+* Changelog:
 *
 *
 *
@@ -43,6 +42,7 @@ void NotifyDesktop::newFail(const std :: string & serviceName, std :: chrono :: 
   NotifyNotification *failNotification = notify_notification_new(title.c_str(), body.c_str(), "dialog-error");
   notify_notification_show(failNotification, NULL);
   g_object_unref(G_OBJECT(failNotification));
+
   notify_uninit();
 }
 
@@ -55,5 +55,5 @@ void NotifyDesktop::newRecovery(const std :: string & serviceName, std :: chrono
   NotifyNotification *failNotification = notify_notification_new(title.c_str(), body.c_str(), "dialog-information");
   notify_notification_show(failNotification, NULL);
   g_object_unref(G_OBJECT(failNotification));
-  notify_uninit();
+  notify_uninit(); 
 }

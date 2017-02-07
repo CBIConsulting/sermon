@@ -20,21 +20,24 @@ namespace
   int generate_random(unsigned char *buffer, int len)
   {
     int rfd = open(RANDOM_DEVICE, O_RDONLY);
+		if (rfd == -1)
+			return 0;
+		
     int generated = 0;
     int entropy;
     int total;
     if (ioctl(rfd, RNDGETENTCNT, &entropy) == -1)
-      return 0;
+      return 0, close(rfd);
 
     while ( (generated<len) && ((total=read(rfd, (buffer+generated), len-generated)) > 0) )
       {
-	generated+=total;
+				generated+=total;
       }
 
     if (total == -1)
-      return 0;
+      return 0, close(rfd);
 
-    return 1;
+    return 1, close(rfd);
   }
 
 }

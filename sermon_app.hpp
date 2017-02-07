@@ -1,13 +1,12 @@
 /* @(#)sermon_app.hpp
  */
-
-#ifndef _SERMON_APP_H
-#define _SERMON_APP_H 1
+#pragma once
 
 #include <string>
 #include <vector>
 #include <map>
 #include <memory>
+#include <mutex>
 #include "notify.hpp"
 #include "service_fail.hpp"
 #include "json/src/json.hpp"
@@ -29,14 +28,21 @@ public:
 
   /* Let's play! */
   void monitoring();
+	void exit();
 
   void say(std::string what, int verbosity=5);
+	std::vector<nlohmann::json> currentOutages(bool allData = false);
+	/* Options, we can include min. outage times, unrecovered, etc */
+	nlohmann::json getHistoryOutages(time_t from, time_t to, const std::vector<std::string>& services = {}, const std::map<std::string, std::string>& options = {}); 
+	nlohmann::json getHistoryOutage(std::string uuid);
+	nlohmann::json getHistoryOutage(uint64_t outageId);
+	void setOutageStatusError(uint64_t outageId, int error);
+	
 protected:
   void debug_notifiers();
   void debug_services();
   void serviceFail(const Service& s, int code, const std::string& message);
   void removePendingFails(const Service &s);
-
   void insertNotifier(const nlohmann::json &notifierJson);
   void insertService(const nlohmann::json &serviceJson);
   void siteProbe(Sermon::Service serv);
@@ -51,10 +57,11 @@ private:
   int maxRedirects;		/* Maximum redirects*/
   double timeout;		/* Default timeout for all services */
   bool checkCertificates;	/* Check certificates?*/
+	bool __exit;
+	
   std::vector <std::shared_ptr<Notify>> notifiers;
   std::vector <Service> services;
-  std::map <std::string, ServiceFail> currentFails;
+	std::mutex currentFails_mutex;
+	std::map <std::string, ServiceFail> currentFails;
 };
-
-#endif /* _SERMON_APP_H */
 

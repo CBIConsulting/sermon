@@ -24,6 +24,7 @@
 #include "sermon_app.hpp"
 #include <iostream>
 #include <fstream>
+#include "signal.h"
 #include "lib/cfileutils.h"
 #include "sermon_exception.hpp"
 #include "request_exception.hpp"
@@ -32,20 +33,29 @@
 #include <exception>
 #include <chrono>
 #include <thread>
+#include <functional>
 #include "glove/glove.hpp"
+#include "glove/glovehttpclient.hpp"
+#include "glove/utils.hpp"
 #include "notifymail.hpp"
 #include "notifycli.hpp"
+#include "httpapi.hpp"
+#include "storage.hpp"
+
 #ifdef DESKTOP_NOTIFICATION
 #include "notifydesktop.hpp"
 #endif
 namespace
 {
   const std::string white_spaces( " \f\n\r\t\v" );
-
+	Storage storage;
+	std::shared_ptr<HttpApi> httpApi;
+	
   /* Default config values as numbers */
   std::map<std::string, long> defaultNumbers = { {"tbp", 1}, {"sap", 100 }, { "verbosity", 1}, {"max_redirects", 10} };
   bool defaultCheckCertificate = true;
   double defaultTimeout = 20;
+	std::thread::id mainThreadId;
 
   bool findConfigFile(std::string &configFile)
   {
@@ -53,11 +63,11 @@ namespace
 
     for (auto p : paths)
       {
-    	if (file_exists(p.c_str())==1)
-    	  {
-    	    configFile = p;
-    	    return true;
-    	  }
+				if (file_exists(p.c_str())==1)
+					{
+						configFile = p;
+						return true;
+					}
       }
 
     return false;
@@ -85,15 +95,15 @@ namespace
 
     try
       {
-	status = std::stoi(temp_status);
+				status = std::stoi(temp_status);
       }
     catch (std::invalid_argument ia)
       {
-	throw RequestException("Wrong status code");
+				throw RequestException("Wrong status code");
       }
     catch (std::out_of_range org)
       {
-	throw RequestException("Wrong status code");
+				throw RequestException("Wrong status code");
       }
 
     return status;
@@ -113,31 +123,56 @@ namespace
     std::string::size_type crlf;
 
     if ( ( colon = input.find(':', start) ) != std::string::npos && 
-	 ( ( crlf = input.find(Glove::CRLF, start) ) != std::string::npos ) )
+				 ( ( crlf = input.find(GloveDef::CRLF, start) ) != std::string::npos ) )
       {
-	if (crlf<colon)
-	  {
-	    /* Not a header!! */
-	  }
-	else
-	  headers.insert( std::pair<std::string, std::string>( trim( input.substr(start, colon - start) ),
-							       trim( input.substr(colon+1, crlf - colon -1 ) ) )
-			  );
+				if (crlf<colon)
+					{
+						/* Not a header!! */
+					}
+				else
+					headers.insert( std::pair<std::string, std::string>( trim( input.substr(start, colon - start) ),
+																															 trim( input.substr(colon+1, crlf - colon -1 ) ) )
+					);
 
-	extract_headers(input, headers, crlf+2);
+				extract_headers(input, headers, crlf+2);
       }
   }
-};
+
+	void receivedSignal(int signum)
+	{
+		if (std::this_thread::get_id() == mainThreadId)
+			{
+				if ( (signum == SIGINT) || (signum == SIGQUIT) || (signum == SIGTERM) )
+					{
+						storage.close();
+						std::exit(-1);
+					}
+			}
+
+		signal(signum, receivedSignal);
+	}
+	
+	void processSignals()
+	{
+		if (signal(SIGINT, receivedSignal) == SIG_ERR)
+			throw SermonException("There was a problem installing signal handler");
+	}
+ };
 
 Sermon::Sermon()
 {
+	std::cout << "------------------------- CONSTRUYO ------------------------: "<<this<<"\n";
   std::string configFile;
+	mainThreadId = std::this_thread::get_id();
+	processSignals();
+	storage.setLogger(std::bind(&Sermon::say, this, std::placeholders::_1, std::placeholders::_2));
   if (!findConfigFile(configFile))
     throw SermonException("Config file not found!!");
 
-  std::cout << TColor(TColor::MAGENTA) << "Loading config file... ";
+  std::cout << TColor(TColor::MAGENTA) << "Loading config file... "<<std::endl;
   loadConfig(configFile);
-  std::cout << TColor(TColor::GREEN) << "OK" << endColor << "\n";
+  std::cout << TColor(TColor::MAGENTA) << "Config loaded... STARTING "<<std::endl;
+  /* std::cout << TColor(TColor::GREEN) << "OK" << endColor << "\n"; */
 
 }
 
@@ -194,19 +229,24 @@ void Sermon::loadConfig(std :: string configFile)
   if (json.find("timeout") == json.end())
     this->timeout = defaultTimeout;
   else
-    {
-      std::cout << "TIMOEUT: "<<json["timeout"].get<double>()<<std::endl;
-      this->timeout = json["timeout"].get<double>();
-    }
-  /* Timeout not done */
+		this->timeout = json["timeout"].get<double>();
 
+	auto storageSettings = json["storage"];
+	
+	if (!storageSettings.is_null())
+		storage.initialize(storageSettings);
+
+	auto httpapi = json["httpapi"];
+	if (!httpapi.is_null())
+		httpApi = std::make_shared<HttpApi>(*this, httpapi);
+	
   auto notify = json.find("notify");
   if ((notify != json.end()) && (notify->is_array()) )
     {
       for (auto i : *notify)
-	{
-	  insertNotifier(i);
-	}
+				{
+					insertNotifier(i);
+				}
     }
   /* debug_notifiers(); */
 
@@ -231,9 +271,9 @@ void Sermon::debug_notifiers()
       std::cout << std::endl << "-- NOTIFIER "<<c++<<"----------"<<std::endl;
       std::cout << "  TYPE: "<<i->getType()<<std::endl;
       for (auto j: i->getOptions())
-	{
-	  std::cout << "OPT("<<j.first<<") = "<<j.second<<std::endl;
-	}
+				{
+					std::cout << "OPT("<<j.first<<") = "<<j.second<<std::endl;
+				}
     }
 }
 
@@ -247,34 +287,43 @@ void Sermon::debug_services()
     }
 }
 
+void Sermon::exit()
+{
+	__exit = true;
+}
+
 void Sermon::monitoring()
 {
+	__exit = false;
   /* We can use a stop variable. If we use multi-threading we
      could stop it from another thread. But with caution! */
-  while (1)
+  while (!__exit)
     {
       for (auto i: this->services)
-	{
-	  try
-	    {
-	      /* Sample error */
-	      /* throw GloveException(123, "Mensaje de error"); */
-	      siteProbe(i);
-	      removePendingFails(i);
+				{
+					try
+						{
+							/* Sample error */
+							/* throw GloveException(123, "Mensaje de error"); */
+							siteProbe(i);
+							/* Just for debugging without probing sited */
+							/* if (rand()%100<50) */
+							/* 	throw GloveException(123, "Mensaje de error"); */
+							removePendingFails(i);
 
-	      /* Sleep after probe */
-	      if (this->sap)
-		std::this_thread::sleep_for(std::chrono::milliseconds(this->sap));
-	    }
-	  catch (GloveException &e)
-	    {
-	      this->serviceFail(i, e.code(), e.what());
-	    }
-	  catch (RequestException &e)
-	    {
-	      this->serviceFail(i, e.code(), e.what());
-	    }
-	}
+							/* Sleep after probe */
+							/* if (this->sap) */
+							/* 	std::this_thread::sleep_for(std::chrono::milliseconds(this->sap)); */
+						}
+					catch (GloveException &e)
+						{
+							this->serviceFail(i, e.code(), e.what());
+						}
+					catch (RequestException &e)
+						{
+							this->serviceFail(i, e.code(), e.what());
+						}
+				}
 
       this->say("Sleeping for " + std::to_string(this->tbp) + "milliseconds...", 2);
 
@@ -286,22 +335,47 @@ void Sermon::monitoring()
 void Sermon::serviceFail(const Service & s, int code, const std :: string & message)
 {
   std::string serviceName = (s.name.empty())?s.url:s.name;
-  if (this->currentFails.find(serviceName)!=this->currentFails.end())
-    return;			/* If error found, end up here*/
 
-  ServiceFail fail(s.name, this->notifiers, code, message);
+	currentFails_mutex.lock();
+	auto thisfail = this->currentFails.find(serviceName);
+	auto tpoint = std::chrono::system_clock::now();
+  if (thisfail!=this->currentFails.end())
+		{
+			storage.addBounce(thisfail->second.dbndx(), tpoint );
+			thisfail->second.bounce();
+			currentFails_mutex.unlock();
 
-  currentFails.insert({s.url, std::move(fail)});
+			/* addBounce */
+			return;			/* If error found, end up here*/
+		}
+	currentFails_mutex.unlock();
+	
+	auto url = s.url;
+	auto dbId = storage.addOutage(url, tpoint, message+std::string(" (")+std::to_string(code)+")");
+	/* std::cout << "BOUNCE ID: "<<dbId<<"\n"; */
+  ServiceFail fail(s.name, dbId, this->notifiers, code, message);
+	std::lock_guard<std::mutex> lock (currentFails_mutex);
+  currentFails.insert({url, std::move(fail)});
 }
 
 void Sermon::removePendingFails(const Service & s)
 {
   std::string serviceName = (s.name.empty())?s.url:s.name;
+	/* Tried to insert mutex.lock() and unlock() but fail object
+	   must not be lost. If we leave unlocked solveOutage(),
+		 fail object could be freed by other thread and cause damages.
+	*/
+	std::lock_guard<std::mutex> lock (currentFails_mutex);
   auto fail = this->currentFails.find(serviceName);
   if (fail==this->currentFails.end())
-    return;			/* If error found, end up here*/
-
+		{
+			return;			/* If no error found, end up here*/
+		}
   fail->second.end();
+	auto dbndx = fail->second.dbndx();
+
+	storage.solveOutage(dbndx, std::chrono::system_clock::now());
+
   this->currentFails.erase(fail);
 }
 
@@ -313,9 +387,9 @@ void Sermon::insertNotifier(const nlohmann::json &notifierJson)
   for (auto i=notifierJson.begin(); i != notifierJson.end(); ++i)
     {
       if (i.key() == "type")
-	type = i.value().get<std::string>();
+				type = i.value().get<std::string>();
       else
-	options[i.key()] = i.value().get<std::string>();
+				options[i.key()] = i.value().get<std::string>();
     }
   std::shared_ptr<Notify> notifier;
   if (type == "mail")
@@ -350,17 +424,17 @@ void Sermon::insertService(const nlohmann::json &serviceJson)
   for (auto i=serviceJson.begin(); i != serviceJson.end(); ++i)
     {
       if (i.key() == "url")
-	url = i.value().get<std::string>();
+				url = i.value().get<std::string>();
       else if (i.key() == "name")
-	name = i.value().get<std::string>();
+				name = i.value().get<std::string>();
       else if (i.key() == "check_certificate")
-	checkCertificates = i.value().get<bool>();
+				checkCertificates = i.value().get<bool>();
       else if (i.key() == "timeout")
-	{
-	  timeout = i.value().get<double>();
-	}
+				{
+					timeout = i.value().get<double>();
+				}
       else
-	throw SermonException("Invalid option \""+i.key()+"\" in configuration file.");
+				throw SermonException("Invalid option \""+i.key()+"\" in configuration file.");
     }
 
   if (name.empty())
@@ -374,19 +448,33 @@ void Sermon::insertService(const nlohmann::json &serviceJson)
 void Sermon::siteProbe(Sermon::Service serv)
 {
   std::string contents;
-  /* try */
-  /*   { */
-   int status = getUrlData(serv.url, contents, serv.timeout, serv.checkCertificates, this->maxRedirects);
-  /* std::cout << "Final status: "<<status<<"\n"; */
+  try
+    {
+			GloveHttpClient client;
+			client.timeout(serv.timeout);
+			client.checkCertificates(serv.checkCertificates);
+			client.maxRedirects(this->maxRedirects);
 
-  if (status != 200)
-    throw RequestException("Site returned invalid status code: "+std::to_string(status));
+			this->say("Connecting "+serv.url+" with timeout "+std::to_string(serv.timeout), 2);
+			auto response = client.request(serv.url);
 
-  /*   } */
-  /* catch (GloveException &e) */
-  /*   { */
-  /* std::cout << "Exception: "<<e.what() << std::endl; */
-  /* } */
+			int status = response.statusCode();
+			auto reqtime = response.allData();
+			contents = response.htmlOutput();
+
+			/* int status = getUrlData(serv.url, contents, serv.timeout, serv.checkCertificates, this->maxRedirects); */
+			/* std::cout << "Final status: "<<status<<"\n"; */
+			this->say("Return status: "+std::to_string(status), 3);
+			
+			if (status != 200)
+				throw RequestException("Site returned invalid status code: "+std::to_string(status));
+
+			storage.addResponseTime(serv.url, std::chrono::system_clock::now(), (uint64_t)(reqtime*1000));
+    }
+  catch (GloveException &e)
+    {
+			throw RequestException(std::string("Connection error: ")+e.what());
+		}
 
 }
 
@@ -416,19 +504,19 @@ int Sermon::getUrlData(std::string url, std::string &out, double timeout, bool c
   if (u.rawpath.empty())
     u.rawpath = "/";
   g.send("GET "+u.rawpath+" HTTP/1.1\r\n"
-	 "Host: "+u.host+"\r\n"
-	 "Accept: text/html,application/xhtml+xml,application/xml\r\n"
-	 "Connection: close\r\n"
-	 "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ubuntu Chromium/45.0.2454.101 Chrome/45.0.2454.101 Safari/537.36\r\n"
-	 "\r\n");
+				 "Host: "+u.host+"\r\n"
+				 "Accept: text/html,application/xhtml+xml,application/xml\r\n"
+				 "Connection: close\r\n"
+				 "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ubuntu Chromium/45.0.2454.101 Chrome/45.0.2454.101 Safari/537.36\r\n"
+				 "\r\n");
   out = g.receive();
-  auto firstline = out.find(GloveBase::CRLF); /* End of first line. Protocol Code Status...*/
+  auto firstline = out.find(GloveDef::CRLF); /* End of first line. Protocol Code Status...*/
   if (firstline == std::string::npos)
     throw RequestException("Didn't receive protocol or status");
 
   status = parseFirstLine(out.substr(0, firstline), protocol, statusmsg);
 
-  auto headerend = out.find(GloveBase::CRLF2);
+  auto headerend = out.find(GloveDef::CRLF2);
   if (headerend == std::string::npos)
     throw RequestException("Unexpected data received");
 
@@ -439,17 +527,17 @@ int Sermon::getUrlData(std::string url, std::string &out, double timeout, bool c
     {
       auto location = httpheaders.find("Location");
       if ( (location != httpheaders.end()) || ((location = httpheaders.find("location")) != httpheaders.end()) )
-	{
-	  std::string newUrl = location->second;
-	  newUrl = newUrl.substr(newUrl.find_first_not_of("/")); /* remove starting / */
-	  if (newUrl.find(u.service)!=0)
-	    newUrl=u.service+"://"+u.host+"/"+newUrl;
-	  return getUrlData(newUrl, out, timeout, checkCertificates, max_redirects-1);
-	}
+				{
+					std::string newUrl = location->second;
+					newUrl = newUrl.substr(newUrl.find_first_not_of("/")); /* remove starting / */
+					if (newUrl.find(u.service)!=0)
+						newUrl=u.service+"://"+u.host+"/"+newUrl;
+					return getUrlData(newUrl, out, timeout, checkCertificates, max_redirects-1);
+				}
       else
-	{
-	  throw RequestException("Redirection requested but Location not found");
-	}
+				{
+					throw RequestException("Redirection requested but Location not found");
+				}
     }
   else
     return status;
@@ -469,4 +557,53 @@ void Sermon::say(std :: string what, int verbosity)
   color = colors[verbosity-1];
 
   std::cout << TColor(color) << "[" << TColor(color+8) << timeformat(std::chrono::system_clock::now()) << TColor(color) << "] "<<what<<endColor<<std::endl;
+}
+
+std::vector<nlohmann::json> Sermon::currentOutages(bool allData)
+{
+	std::vector<nlohmann::json> out;
+	std::lock_guard<std::mutex> lock (currentFails_mutex);
+
+	for (auto fail : this->currentFails)
+		{			
+			Storage::Strmap failData = {
+				{ "serviceName", fail.second.getServiceName() },
+				{ "bounces", std::to_string(fail.second.getBounces()) },
+				{ "code", std::to_string(fail.second.getErrorCode()) },
+				{ "startTime", timeformat(fail.second.getStartTime()) }
+			};
+			if (allData)
+				{
+					auto dbId = fail.second.dbndx();
+					failData["dbId"] = std::to_string(dbId);
+					auto storedData = storage.getOutageById(dbId);
+					failData["uuid"] = storedData["uuid"];
+					failData["tags"] = storedData["tags"];
+					failData["userDescription"] = storedData["userDescription"];
+				}
+			out.push_back(failData);
+		}
+	return out;
+}
+
+nlohmann::json Sermon::getHistoryOutages(time_t from, time_t to, const std::vector<std::string>& services, const std::map<std::string, std::string>& options)
+{
+	return storage.getHistoryOutages(std::chrono::system_clock::from_time_t(from), std::chrono::system_clock::from_time_t(to), services, options);
+}
+	
+nlohmann::json Sermon::getHistoryOutage(std::string uuid)
+{
+	auto outage = storage.getOutageByUuid(uuid);
+	return (outage.size())?nlohmann::json{ outage }: nlohmann::json{};		
+}
+
+nlohmann::json Sermon::getHistoryOutage(uint64_t outageId)
+{
+	auto outage = storage.getOutageById(outageId);
+	return (outage.size())?nlohmann::json{ outage }: nlohmann::json{};		
+}
+
+void Sermon::setOutageStatusError(uint64_t outageId, int error)
+{
+	return storage.setOutageError(outageId, error);
 }

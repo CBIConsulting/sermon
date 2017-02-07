@@ -53,7 +53,7 @@ void NotifyMail::newFail(const std :: string & serviceName, std :: chrono :: sys
   if (debug == option.end())
     {
       if (!Mailer::sendmail(from, option["to"], subject, mailBody))
-	std::cerr << "Could not send e-mail to administrator!!!"<<std::endl;
+				std::cerr << "Could not send e-mail to administrator!!!"<<std::endl;
     }
   else if (debug->second!="hidden")
     {

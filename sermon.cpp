@@ -18,6 +18,8 @@
 #include "sermon_exception.hpp"
 #include "sermon_app.hpp"
 #include "lib/tcolor.hpp"
+#include <thread>
+
 
 int main(int argc, char *argv[])
 {
@@ -25,7 +27,7 @@ int main(int argc, char *argv[])
 
   try
     {
-      s = std::make_shared<Sermon>(Sermon());
+      s = std::make_shared<Sermon>();
     }
   catch (SermonException &e)
     {
@@ -33,8 +35,8 @@ int main(int argc, char *argv[])
       return 1;
     }
 
-  s-> monitoring();
+	s-> monitoring();
 
-  return EXIT_SUCCESS;
+	return EXIT_SUCCESS;
 }
 

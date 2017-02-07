@@ -18,8 +18,8 @@
 
 #include "service_fail.hpp"
 
-ServiceFail::ServiceFail(const std::string &serviceName, std :: vector < std::shared_ptr<Notify>> & notifiers, int errorCode, const std::string &message):
-  serviceName(serviceName), errorCode(errorCode), lastMessage(message), notifiers(notifiers)
+ServiceFail::ServiceFail(const std::string &serviceName, uint64_t dbId, std :: vector < std::shared_ptr<Notify>> & notifiers, int errorCode, const std::string &message):
+  serviceName(serviceName), errorCode(errorCode), lastMessage(message), notifiers(notifiers), dbId(dbId), bounces(0)
 {
   outageStart = std::chrono::system_clock::now();
   for (auto n : notifiers)
@@ -27,18 +27,22 @@ ServiceFail::ServiceFail(const std::string &serviceName, std :: vector < std::sh
 }
 
 ServiceFail::ServiceFail(const ServiceFail & sf): notifiers(sf.notifiers), 
-						  serviceName(sf.serviceName),
-						  outageStart(sf.outageStart),
-						  errorCode(sf.errorCode),
-						  lastMessage(sf.lastMessage)
+	serviceName(sf.serviceName),
+	outageStart(sf.outageStart),
+	errorCode(sf.errorCode),
+	bounces(sf.bounces),
+	dbId(sf.dbId),
+	lastMessage(sf.lastMessage)
 {
 }
 
 ServiceFail::ServiceFail(ServiceFail && sf) : notifiers(std::move(sf.notifiers)), 
-					      serviceName(std::move(sf.serviceName)),
-					      outageStart(std::move(sf.outageStart)),
-					      errorCode(std::move(sf.errorCode)),
-					      lastMessage(std::move(sf.lastMessage))
+	serviceName(std::move(sf.serviceName)),
+	outageStart(std::move(sf.outageStart)),
+	errorCode(std::move(sf.errorCode)),
+	dbId(sf.dbId),
+	bounces(sf.bounces),
+	lastMessage(std::move(sf.lastMessage))
 {
 }
 
@@ -46,6 +50,21 @@ ServiceFail::~ServiceFail()
 {
 }
 
+void ServiceFail::bounce()
+{
+	bounces++;
+}
+
+uint64_t ServiceFail::getBounces()
+{
+	return bounces;
+}
+
+std::chrono::system_clock::time_point ServiceFail::getStartTime()
+{
+	return outageStart;
+}
+	
 std::string ServiceFail::getServiceName()
 {
   return serviceName;

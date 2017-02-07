@@ -1,0 +1,17 @@
+El objeto ServiceFail podría recibir también la información completa del servicio, así
+como el Engine de datos (El Engine podría sacarlo de un objeto global tipo App::Engine())
+
+De esta manera, sería el ServiceFail el que haría los avisos y las entradas en base de datos.
+Además, podríamos configurar los avisos a un número determinado de bounces.
+
+Así hacemos que Sermon_app no tenga que controlar tantas cosas y todo vaya por detrás.
+****
+En las funciones de base de datos, los IDs devueltos deben ser uint64_t
+
+****
+En configuración, que podamos desactivar logeo de outages o logeo de responsetimes
+
+******
+ServiceFail->end() podría lanzarse en otro thread separado, así mientras se envían los mails
+el programa puede continuar. Debería copiarse todo en otra clase, porque puede que el objeto
+sea destruido mientras se envian los e-mails

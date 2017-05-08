@@ -34,7 +34,7 @@ NotifyDesktop::~NotifyDesktop()
 }
 
 
-void NotifyDesktop::newFail(const std :: string & serviceName, std :: chrono :: system_clock :: time_point outageStart, int code, const std :: string &message)
+void NotifyDesktop::_newFail(const std :: string & serviceName, std :: chrono :: system_clock :: time_point outageStart, int code, const std :: string &message)
 {
   notify_init("Service error");
   std::string title = "Service "+serviceName+" failed!";
@@ -46,7 +46,11 @@ void NotifyDesktop::newFail(const std :: string & serviceName, std :: chrono :: 
   notify_uninit();
 }
 
-void NotifyDesktop::newRecovery(const std :: string & serviceName, std :: chrono :: system_clock :: time_point outageStart, std :: chrono :: system_clock :: time_point outageEnd, int code, const std :: string &message)
+void NotifyDesktop::_newBounce(const std::string& serviceName, uint64_t bounces, std::chrono::system_clock::time_point outageStart, std::chrono::system_clock::time_point outageElapsed, int code, const std::string& message)
+{
+}
+
+void NotifyDesktop::_newRecovery(const std :: string & serviceName, std :: chrono :: system_clock :: time_point outageStart, std :: chrono :: system_clock :: time_point outageEnd, int code, const std :: string &message)
 {
   auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(outageEnd - outageStart).count();
   notify_init("Service recovered");
@@ -56,4 +60,8 @@ void NotifyDesktop::newRecovery(const std :: string & serviceName, std :: chrono
   notify_notification_show(failNotification, NULL);
   g_object_unref(G_OBJECT(failNotification));
   notify_uninit(); 
+}
+
+void NotifyDesktop::_newMessage(const std::string& type, const std::string& serviceName, std::chrono::system_clock::time_point outageStart, const std::string& message)
+{
 }

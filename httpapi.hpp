@@ -17,6 +17,8 @@ public:
 
 protected:
   static void index(GloveHttpRequest& request, GloveHttpResponse& response);
+	void sermonStatus(GloveHttpRequest& request, GloveHttpResponse& response);
+	void sermonStatusPost(GloveHttpRequest& request, GloveHttpResponse& response);
   void realtimeErrors(GloveHttpRequest& request, GloveHttpResponse& response);
   void servicesBasicData(GloveHttpRequest& request, GloveHttpResponse& response);
   void responseStats(GloveHttpRequest& request, GloveHttpResponse& response);

@@ -23,7 +23,7 @@ public:
     bool checkCertificates;
   };
 
-  Sermon();
+  Sermon(std::string configFile="");
   virtual ~Sermon();
 
   /* Let's play! */
@@ -36,8 +36,19 @@ public:
 	nlohmann::json getHistoryOutages(time_t from, time_t to, const std::vector<std::string>& services = {}, const std::map<std::string, std::string>& options = {}); 
 	nlohmann::json getHistoryOutage(std::string uuid);
 	nlohmann::json getHistoryOutage(uint64_t outageId);
+	nlohmann::json getServiceStats(time_t from, time_t to, const std::vector<std::string>& services = {}, const std::map<std::string, std::string>& options = {});
+	nlohmann::json getServiceStats(time_t from, time_t to, const uint64_t serviceId, const std::map<std::string, std::string>& options = {});
+	nlohmann::json getServicesBasicData(const std::vector<std::string>& services = {}, const std::map<std::string, std::string>& options = {});
+
+	void changeOutageDescription(uint64_t outageId, std::string description);
+	void changeOutageTags(uint64_t outageId, std::string tags);
 	void setOutageStatusError(uint64_t outageId, int error);
-	
+	bool paused();
+	bool paused(bool status);
+	std::string lastAction();
+	std::string lastProbe();
+	std::chrono::system_clock::time_point lastActionDtm();	
+	std::chrono::system_clock::time_point lastProbeDtm();	
 protected:
   void debug_notifiers();
   void debug_services();
@@ -48,6 +59,9 @@ protected:
   void siteProbe(Sermon::Service serv);
   int getUrlData(std::string url, std::string &out, double timeout=-1, bool checkCertificates=true, int max_redirects=2);
 
+	std::string lastAction(std::string action);
+	std::string lastProbe(std::string action);
+	
 private:
   void loadConfig(std::string configFile);
 
@@ -58,6 +72,11 @@ private:
   double timeout;		/* Default timeout for all services */
   bool checkCertificates;	/* Check certificates?*/
 	bool __exit;
+	bool __paused;									/* Paused? */
+	std::string __lastAction;
+	std::string __lastProbe;
+	std::chrono::system_clock::time_point __lastActionDtm;
+	std::chrono::system_clock::time_point __lastProbeDtm;
 	
   std::vector <std::shared_ptr<Notify>> notifiers;
   std::vector <Service> services;

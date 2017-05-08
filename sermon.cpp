@@ -27,7 +27,10 @@ int main(int argc, char *argv[])
 
   try
     {
-      s = std::make_shared<Sermon>();
+			if (argc>1)
+				s = std::make_shared<Sermon>(argv[1]);
+			else
+				s = std::make_shared<Sermon>();
     }
   catch (SermonException &e)
     {

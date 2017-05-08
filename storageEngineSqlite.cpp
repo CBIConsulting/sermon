@@ -39,6 +39,10 @@ namespace
 		
 	FieldDescription _fieldType(sqlite3* db, std::string table, std::string field)
 	{
+		auto tablesp = table.find(' ');
+		if (tablesp != std::string::npos)
+			table = table.substr(0, tablesp);
+
 		std::string querystr = "PRAGMA table_info("+table+")";
 		sqlite3_stmt *query;
 
@@ -165,6 +169,7 @@ namespace
 							querystr+=c.second.substr(2);
 						else if (isnum(c.second))
 							{
+								/* querystr+="? "; */
 								querystr+=c.second+" ";
 								c.second="F(";	/* Workaround */
 							}
@@ -183,6 +188,9 @@ namespace
 
 void StorageEngineSqlite::createTable(std::string name, std::list<std::pair<std::string, std::string> > fields, bool ifNotExists)
 {
+	if (_readonly)
+		return;
+
   char *error = NULL;
   std::string query = "CREATE TABLE ";
   if (ifNotExists)
@@ -205,6 +213,9 @@ void StorageEngineSqlite::createTable(std::string name, std::list<std::pair<std:
 
 long unsigned StorageEngineSqlite::update(std::string table, long unsigned rowid, std::map<std::string, std::string> fields, bool clean)
 {
+	if (_readonly)
+		return 0;
+
   std::string querystr, values;
   querystr = "UPDATE "+table+" SET ";
 	bool first = true;
@@ -275,8 +286,97 @@ long unsigned StorageEngineSqlite::update(std::string table, long unsigned rowid
   return rowid;
 }
 
+long unsigned StorageEngineSqlite::update(std::string table, std::map<std::string, std::string> fields, std::list <std::pair < std::string, std::string> > conditions, bool clean)
+{
+	if (_readonly)
+		return 0;
+
+  std::string querystr, values;
+  querystr = "UPDATE "+table+" SET ";
+	bool first = true;
+  for (auto f : fields)
+    {
+      if (!first)
+				{
+					querystr+=", ";
+				}
+
+			first = false;
+
+      querystr=querystr+f.first+"=";
+			/* Functions and so */
+			if ( (f.second.length()>2) && (f.second.substr(0,2)=="F(") )
+				querystr+=f.second.substr(2);
+			else
+				querystr+="?";
+    }
+	if ( (fieldType(db, table, "mtime").type == DATETIME) && (fields.find("mtime")==fields.end()) )
+		{
+			querystr+=", mtime=DATETIME('now')";
+		}
+	
+	querystr+=" "+::parseConditions(conditions);
+  sqlite3_stmt *query;
+
+  if (sqlite3_prepare_v2(db, querystr.c_str(), -1, &query, NULL) != SQLITE_OK)
+    throw SQLiteException(2, "Could not prepare SQLite statement: "+querystr);
+
+  unsigned order=1;
+
+  for (auto f : fields)
+    {
+      int res;
+			if ( (f.second.length()>2) && (f.second.substr(0,2)=="F(") )
+				continue;
+			try
+				{
+					if (fieldType(db, table, f.first).type == NUMBER)
+						{
+							res = sqlite3_bind_int(query, order++, std::stoi(f.second));
+						}
+					else
+						if (fieldType(db, table, f.first).type == FLOAT)
+						{
+							res = sqlite3_bind_double(query, order++, std::stod(f.second));
+						}
+					else
+						{
+							res = sqlite3_bind_text(query, order++, f.second.c_str(), f.second.length(), SQLITE_TRANSIENT);
+						}
+				}
+			catch (std::exception& e)
+				{
+					/* Invalid conversion */
+					return 0;
+				}
+      if (res != SQLITE_OK)
+				throw SQLiteException(3, "Failed binding value into prepared statement. Query: "+querystr);
+    }
+  for (auto f : conditions)
+    {
+      int res;
+
+			if ( (f.second.length()>=2) && (f.second.substr(0,2)=="F(") )
+				continue;
+
+			res = sqlite3_bind_text(query, order++, f.second.c_str(), -1, SQLITE_TRANSIENT);
+      if (res != SQLITE_OK)
+				throw SQLiteException(14, "Failed binding value into prepared statement. Query: "+querystr);
+    }
+	
+  int res = res = sqlite3_step(query);
+
+  if (res!=SQLITE_DONE)
+    throw SQLiteException(4, "Error executing query: "+querystr);
+
+  return sqlite3_changes(db);
+}
+
 long unsigned StorageEngineSqlite::insert(std::string table, std::map<std::string, std::string> fields, bool clean)
 {
+	if (_readonly)
+		return 0;
+
   std::string querystr, values;
   querystr = "INSERT INTO "+table+" (";
 	
@@ -381,6 +481,9 @@ unsigned StorageEngineSqlite::tableCount(std::string table, std::list <std::pair
 
 long unsigned StorageEngineSqlite::destroy(std::string table, long unsigned rowid)
 {
+	if (_readonly)
+		return 0;
+	
   std::string querystr = "DELETE FROM "+table+" WHERE rowid="+std::to_string(rowid);
   sqlite3_stmt *query;
 
@@ -432,10 +535,10 @@ long unsigned StorageEngineSqlite::destroy(std::string table, std::list <std::pa
 std::list <std::map < std::string, std::string > > StorageEngineSqlite::getData(std::string table, std::string fields, std::list <std::pair < std::string, std::string> > conditions, std::string extra)
 {
   std::string querystr = "SELECT "+fields+" FROM "+table+" ";
-
 	querystr+=::parseConditions(conditions);
 	
   querystr+=extra;
+
   sqlite3_stmt *query;
   if (sqlite3_prepare_v2(db, querystr.c_str(), -1, &query, NULL) != SQLITE_OK)
 		throw SQLiteException(13, "Could not prepare SQLite statement: "+querystr);
@@ -487,13 +590,17 @@ std::list <std::map < std::string, std::string > > StorageEngineSqlite::getData(
   return resdata;
 }
 
-StorageEngineSqlite::StorageEngineSqlite(const nlohmann::json &settings, Logger logger):StorageEngine(logger)
+StorageEngineSqlite::StorageEngineSqlite(const nlohmann::json &settings, Logger logger):StorageEngine(logger),_readonly(false)
 {
 	logger("Initializing SQLite...", 3);
 	if (settings.find("file") == settings.end())
 		throw SermonException("No SQLite file given");
 	
 	auto file = settings["file"].get<std::string>();
+
+	if ( (settings.find("readonly") != settings.end()) && (settings.find("readonly")->is_boolean()) )
+		_readonly = settings.find("readonly")->get<bool>();
+	
 	initialize(file);
 	
 }
@@ -759,7 +866,7 @@ std::map < std::string, std::string > StorageEngineSqlite::getByOutageId(uint64_
 	try
 		{
 			auto sData = getData("Outages O LEFT JOIN Services S ON O.Service_id=S.rowid", "O.rowid AS Id, O.*, S.id AS Service_name", {
-					{"rowid", std::to_string(outageId) }
+					{"O.rowid", std::to_string(outageId) }
 				}, "LIMIT 1");
 			if (sData.size()==0)
 				return {};
@@ -788,6 +895,22 @@ std::map < std::string, std::string > StorageEngineSqlite::getByOutageUuid(std::
 		{
 			return {};
 		}
+}
+
+void StorageEngineSqlite::setOutageDescription(uint64_t outageId, std::string description)
+{
+	update("Outages", outageId, {
+			{ "updated_dtm", timeformat(std::chrono::system_clock::now()) },
+			{ "userdes", description }
+		});
+}
+
+void StorageEngineSqlite::setOutageTags(uint64_t outageId, std::string tags)
+{
+	update("Outages", outageId, {
+			{ "updated_dtm", timeformat(std::chrono::system_clock::now()) },
+			{ "tags", tags }
+		});
 }
 
 std::list <std::map < std::string, std::string > > StorageEngineSqlite::getOutages(const std::map<std::string, std::string>& conditions)
@@ -834,3 +957,241 @@ std::list <std::map < std::string, std::string > > StorageEngineSqlite::getOutag
 	
 	return data;
 }
+
+std::list <std::map < std::string, std::string > > StorageEngineSqlite::getOrphanOutages(const std::map<std::string, std::string>& conditions)
+{
+	// SELECT O.rowid, S.id, O.* FROM Outages O LEFT JOIN Services S ON S.rowid=O.Service_id  WHERE O.Solved=0 AND O.Created_dtm IS NOT (SELECT MAX(Created_dtm) FROM Outages OO WHERE OO.Service_id=O.Service_id);
+
+	std::list <std::pair < std::string, std::string> > queryConditions = {
+		{ "O.Solved", "0" },
+		{ "O.Created_dtm!=", "F((SELECT MAX(Created_dtm) FROM Outages OO WHERE OO.Service_id=O.Service_id)" }
+	};
+	
+	auto data = getData("Outages O LEFT JOIN Services S ON O.Service_id=S.rowid", "O.rowid AS Id, S.id AS Service_name, O.*", queryConditions);
+	
+	return data;
+	//	return {};
+}
+
+uint64_t StorageEngineSqlite::doFixOrphanOutages(int32_t newCode)
+{
+	std::list <std::pair < std::string, std::string> > queryConditions = {
+		{ "O.Solved", "0" },
+		{ "O.Created_dtm!=", "F((SELECT MAX(Created_dtm) FROM Outages OO WHERE OO.Service_id=O.Service_id)" }
+	};
+
+	return update("Outages", {
+			{ "solved", std::to_string(newCode) },
+			{ "updated_dtm", "F(DATETIME('now')" }
+		},
+		{
+			{ "Solved", "0" },
+			{ "Created_dtm!=", "F((SELECT MAX(Created_dtm) FROM Outages OO WHERE OO.Service_id=Outages.Service_id)" }
+		});		
+}
+
+std::list <std::map < std::string, std::string > > StorageEngineSqlite::fixOrphanOutages(uint32_t newCode, const std::map<std::string, std::string>& conditions)
+{
+	auto outages = getOrphanOutages(conditions);
+	auto n = doFixOrphanOutages(newCode);
+	return outages;
+}
+
+std::list <std::map < std::string, std::string > > StorageEngineSqlite::getResponseTimeStats(const std::map<std::string, std::string>& conditions)
+{
+	std::list <std::pair < std::string, std::string> > queryConditions;
+	auto _from = conditions.find("from");
+	auto _to = conditions.find("to");
+
+	if (_from != conditions.end())
+		queryConditions.push_back({ "RT.probe_dtm>=", _from->second});
+	if (_to != conditions.end())
+		queryConditions.push_back({ "RT.probe_dtm<=", _to->second});
+	
+	auto servs = conditions.find("services");
+	if (servs != conditions.end())
+		{
+			auto ss = GCommon::tokenize(servs->second, (char)',');
+			auto lastOne = --ss.end();
+			
+			for (auto srv=ss.begin(); srv!=ss.end(); ++srv)
+				{
+					auto serviceId = getServiceId(*srv, false);
+					if (serviceId==0)
+						{
+							throw SermonException("Service: "+*srv+" not found");
+						}
+					if (srv==ss.begin())	/* First one */
+						queryConditions.push_back({std::string((srv==lastOne)?"":"(")+"Service_id", std::to_string(serviceId)});
+					else if (srv==lastOne) /* Last one */
+						queryConditions.push_back({"|Service_id)", std::to_string(serviceId)});
+					else
+						queryConditions.push_back({"|Service_id", std::to_string(serviceId)});
+				}
+		}
+	else if ((servs = conditions.find("Service_id")) != conditions.end())
+		{
+			queryConditions.push_back({ "Service_id", servs->second});
+		}
+
+	auto data = getData("ResponseTime RT LEFT JOIN Services S ON RT.Service_id=S.rowid", "S.id AS Service_name, S.rowid AS Service_id, MIN(probe_dtm) AS Time_start, MAX(probe_dtm) AS Time_end, MIN(time) AS Response_min, MAX(time) AS Response_max, AVG(time) AS Response_avg", queryConditions, "GROUP BY service_id");
+	
+	return data;
+}
+
+std::map <uint64_t , std::map < std::string, std::string > > StorageEngineSqlite::getOutageStats(const std::map<std::string, std::string>& conditions)
+{
+	/* SELECT service_id, COUNT(outtime) AS Outtimes_count, AVG(outtime) AS Outtime_avg, MIN(outtime) AS Outtime_min, MAX(outtime) AS Outtime_max, MIN(created_dtm) AS Outages_start, MAX(created_dtm) AS Outages_end, * FROM (SELECT STRFTIME("%s",updated_dtm)-STRFTIME("%s",created_dtm) AS outtime, * FROM Outages WHERE solved=1) GROUP BY service_id; */
+
+	std::list <std::pair < std::string, std::string> > queryConditions;
+	auto _from = conditions.find("from");
+	auto _to = conditions.find("to");
+
+	if (_from != conditions.end())
+		queryConditions.push_back({ "O.created_dtm>=", _from->second});
+	
+	if (_to != conditions.end())
+		queryConditions.push_back({ "O.created_dtm<=", _to->second});
+	
+	auto servs = conditions.find("services");
+	if (servs != conditions.end())
+		{
+			auto ss = GCommon::tokenize(servs->second, (char)',');
+			auto lastOne = --ss.end();
+			
+			for (auto srv=ss.begin(); srv!=ss.end(); ++srv)
+				{
+					auto serviceId = getServiceId(*srv, false);
+					if (serviceId==0)
+						{
+							throw SermonException("Service: "+*srv+" not found");
+						}
+					if (srv==ss.begin())	/* First one */
+						queryConditions.push_back({std::string((srv==lastOne)?"":"(")+"Service_id", std::to_string(serviceId)});
+					else if (srv==lastOne) /* Last one */
+						queryConditions.push_back({"|Service_id)", std::to_string(serviceId)});
+					else
+						queryConditions.push_back({"|Service_id", std::to_string(serviceId)});
+				}
+		}
+	else if ((servs = conditions.find("Service_id")) != conditions.end())
+		{
+			queryConditions.push_back({ "Service_id", servs->second});
+		}
+	
+	auto solved = getData("(SELECT STRFTIME(\"%s\",updated_dtm)-STRFTIME(\"%s\",created_dtm) AS outtime, * FROM Outages WHERE solved=1) O LEFT JOIN Services S ON O.service_id=S.rowid",
+												"O.service_id AS Service_id, S.id AS Service_name, COUNT(O.outtime) AS Outtimes_count, AVG(O.outtime) AS Outtime_avg, MIN(O.outtime) AS Outtime_min, MAX(O.outtime) AS Outtime_max, MIN(O.created_dtm) AS Outages_start, MAX(O.created_dtm) AS Outages_end", queryConditions, "GROUP BY service_id");
+
+	queryConditions.push_back({"O.solved", "-1"});
+	auto probeErrors = getData("Outages O LEFT JOIN Services S ON O.service_id=S.rowid",
+														 "O.service_id AS Service_id, S.id AS Service_name, COUNT(O.rowid) AS Probe_errors, MIN(O.Created_dtm) AS First_dtm, MAX(O.Created_dtm) AS Last_dtm",
+														 queryConditions,
+														 "GROUP BY service_id");
+
+	std::map <uint64_t , std::map < std::string, std::string > > output;
+	for (auto i : solved)
+		{
+			auto serviceId = stoll(i["Service_id"]);
+			auto oel = output.find(serviceId);
+			if (oel == output.end())
+				{
+					auto inst = output.insert({serviceId, {
+								{ "Service_id",  std::to_string (serviceId) },
+								{"Service_name", i["Service_name"] },									
+							}});
+					if (!inst.second)
+						throw SermonException("Cannot collect stats information");
+					
+					oel = inst.first;
+				}
+
+			oel->second["Outimes_count"] = std::to_string(std::stoll(i["Outtimes_count"]));
+			oel->second["Outtime_avg"] = i["Outtime_avg"];
+			oel->second["Outtime_min"] = i["Outtime_min"];
+			oel->second["Outtime_max"] = i["Outtime_max"];
+			oel->second["Outages_start"] = i["Outages_start"];
+			oel->second["Outages_end"] = i["Outages_end"];		
+		}
+
+		for (auto i : probeErrors)
+		{
+			auto serviceId = stoll(i["Service_id"]);
+			auto oel = output.find(serviceId);
+			if (oel == output.end())
+				{
+					auto inst = output.insert({serviceId, {
+								{ "Service_id",  std::to_string (serviceId) },
+								{"Service_name", i["Service_name"] },									
+							}});
+					if (!inst.second)
+						throw SermonException("Cannot collect stats information");
+					
+					oel = inst.first;
+				}
+			oel->second["Probe_errors"] = std::to_string(std::stoll(i["Probe_errors"]));
+			oel->second["Probe_err_first"] = i["First_dtm"];
+			oel->second["Probe_err_last"] = i["Last_dtm"];
+		}
+
+		/* return solved; */
+	return output;
+}
+
+std::map<std::string, std::map < std::string, std::string > > StorageEngineSqlite::getServicesDataByName(const std::map<std::string, std::string>& conditions)
+{
+	std::map<std::string, std::map < std::string, std::string > > output;
+	auto outageStats = getOutageStats(conditions);
+	auto responseStats = getResponseTimeStats(conditions);
+
+	for (auto& s : responseStats)
+		{
+			auto serviceId = std::stoll(s["Service_id"]);
+			auto outagess = outageStats.find(serviceId);
+			if (outagess != outageStats.end())
+				{
+					for (auto oss : outagess->second)
+						{
+							s[oss.first] = oss.second;
+						}
+				}
+			
+			output.insert({ s["Service_name"], s });
+		}
+	
+	return output;
+}
+
+std::list <std::map<std::string, std::string>> StorageEngineSqlite::getAllResponseTimes(const std::map<std::string, std::string>& conditions)
+{
+	std::list <std::pair < std::string, std::string> > queryConditions;
+	auto _from = conditions.find("from");
+	auto _to = conditions.find("to");
+	auto _sid = conditions.find("Service_id");
+	
+	if ( (_from == conditions.end()) || (_to == conditions.end()) || (_sid == conditions.end()) )
+		throw SermonException("Not enough data for getAllResponseTimes");
+	
+	queryConditions.push_back({ "RT.probe_dtm>=", _from->second});
+	queryConditions.push_back({ "RT.probe_dtm<=", _to->second});
+	queryConditions.push_back({ "RT.service_id", _sid->second});
+
+	return getData("ResponseTime RT", "rowid AS Response_id, probe_dtm AS Probe_dtm, time, error", queryConditions, "ORDER BY probe_dtm ASC");
+}
+
+std::list <std::map<std::string, std::string>> StorageEngineSqlite::getAllOutages(const std::map<std::string, std::string>& conditions)
+{
+	std::list <std::pair < std::string, std::string> > queryConditions;
+	auto _from = conditions.find("from");
+	auto _to = conditions.find("to");
+	auto _sid = conditions.find("Service_id");
+	
+	if ( (_from == conditions.end()) || (_to == conditions.end()) || (_sid == conditions.end()) )
+		throw SermonException("Not enough data for getAllResponseTimes");
+	
+	queryConditions.push_back({ "O.created_dtm>=", _from->second});
+	queryConditions.push_back({ "O.created_dtm<=", _to->second});
+	queryConditions.push_back({ "O.service_id", _sid->second});
+
+	return getData("Outages O", "rowid AS Outage_num, uuid AS Outage_id, created_dtm AS Created_dtm, updated_dtm AS `Update`, totaltime, solved", queryConditions, "ORDER BY created_dtm ASC");
+}
+

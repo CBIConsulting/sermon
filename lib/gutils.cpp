@@ -18,6 +18,11 @@
   }
 #endif
 
+namespace
+{
+	const char dirSlash = '/';
+};
+
 namespace GCommon
 {
   std::string _defaultStartDelimiter = ":";
@@ -278,6 +283,19 @@ namespace GCommon
     return ss.str();
   }
 
+	std::string pathSlash(std::string& path)
+	{
+		trim(path);
+		
+		if (path.empty())
+			return path;
+
+		if (path.back()!=dirSlash)
+			path+=dirSlash;
+
+		return path;
+	}
+
   void GlobalSettings::basics(std::string programName, std::string programShortName, std::string programFile, std::string programVersion)
   {
     storage.insert({"name", programName});
@@ -339,6 +357,12 @@ namespace GCommon
 			source.append(count, c);
 
 		return source;
+	}
+
+	std::string uppercase(std::string s)
+	{
+    std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+		return s;
 	}
 
 };

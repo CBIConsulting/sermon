@@ -44,6 +44,8 @@ namespace GCommon
   bool isNumeric(const std::string& input);
 	bool endsWith(std::string const & value, std::string const & ending);
 
+	std::string uppercase(std::string s);
+	
   template <typename T>
   std::string to_string ( T num, int precision=-1, int width=-1, bool fixed=false, char fill='0')
   {
@@ -67,6 +69,7 @@ namespace GCommon
 {
   bool findFile(std::string &configFile, const std::list<std::string>& paths, const std::map<std::string, std::string>& replacements={});
   bool findDir(std::string &directory, const std::list<std::string>& paths, const std::map<std::string, std::string>& replacements={});
+	std::string pathSlash(std::string& path);
   std::string put_time(std::string format, time_t tim=0);
 
   class GlobalSettings

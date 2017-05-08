@@ -35,7 +35,7 @@ NotifyMail::~NotifyMail()
 }
 
 
-void NotifyMail::newFail(const std :: string & serviceName, std :: chrono :: system_clock :: time_point outageStart, int code, const std :: string &message)
+void NotifyMail::_newFail(const std :: string & serviceName, std :: chrono :: system_clock :: time_point outageStart, int code, const std :: string &message)
 {
   auto mailBody="System Administrator,\n\n"
     "Sermon has detected an error in the following service:\n\n"
@@ -52,8 +52,9 @@ void NotifyMail::newFail(const std :: string & serviceName, std :: chrono :: sys
   auto debug = option.find("debug");
   if (debug == option.end())
     {
-      if (!Mailer::sendmail(from, option["to"], subject, mailBody))
-				std::cerr << "Could not send e-mail to administrator!!!"<<std::endl;
+			int statusCode;
+      if ((statusCode = Mailer::sendmail(from, option["to"], subject, mailBody))<=0)
+				std::cerr << "Could not send e-mail to administrator!!! (Status code "<<statusCode<<")"<<std::endl;
     }
   else if (debug->second!="hidden")
     {
@@ -63,7 +64,11 @@ void NotifyMail::newFail(const std :: string & serviceName, std :: chrono :: sys
     }
 }
 
-void NotifyMail::newRecovery(const std :: string & serviceName, std :: chrono :: system_clock :: time_point outageStart, std :: chrono :: system_clock :: time_point outageEnd, int code, const std :: string &message)
+void NotifyMail::_newBounce(const std::string& serviceName, uint64_t bounces, std::chrono::system_clock::time_point outageStart, std::chrono::system_clock::time_point outageElapsed, int code, const std::string& message)
+{
+}
+
+void NotifyMail::_newRecovery(const std :: string & serviceName, std :: chrono :: system_clock :: time_point outageStart, std :: chrono :: system_clock :: time_point outageEnd, int code, const std :: string &message)
 {
   auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(outageEnd - outageStart).count();
   std::string from = (option.find("from")!=option.end())?option["from"]:"sermonmailer@root";
@@ -80,7 +85,7 @@ void NotifyMail::newRecovery(const std :: string & serviceName, std :: chrono ::
   if (debug == option.end())
     {
       if (!Mailer::sendmail(from, option["to"], subject, mailBody))
-	std::cerr << "Could not send e-mail to administrator!!!"<<std::endl;
+				std::cerr << "Could not send e-mail to administrator!!!"<<std::endl;
     }
   else if (debug->second!="hidden")
     {
@@ -88,4 +93,8 @@ void NotifyMail::newRecovery(const std :: string & serviceName, std :: chrono ::
       std::cerr << mailBody;
       std::cerr << " ------------------------- SERVICE RECOVERY MAIL ------------------------"<<std::endl;
     }
+}
+
+void NotifyMail::_newMessage(const std::string& type, const std::string& serviceName, std::chrono::system_clock::time_point outageStart, const std::string& message)
+{
 }

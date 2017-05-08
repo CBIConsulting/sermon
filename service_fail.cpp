@@ -53,6 +53,9 @@ ServiceFail::~ServiceFail()
 void ServiceFail::bounce()
 {
 	bounces++;
+	
+  for (auto n : notifiers)
+    n->newBounce(serviceName, bounces, outageStart, std::chrono::system_clock::now(), errorCode, lastMessage);		
 }
 
 uint64_t ServiceFail::getBounces()

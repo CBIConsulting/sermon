@@ -38,6 +38,7 @@
 #include "glove/glovehttpclient.hpp"
 #include "glove/utils.hpp"
 #include "notifymail.hpp"
+#include "notifywebhook.hpp"
 #include "notifycli.hpp"
 #include "httpapi.hpp"
 #include "storage.hpp"
@@ -144,6 +145,7 @@ namespace
 			{
 				if ( (signum == SIGINT) || (signum == SIGQUIT) || (signum == SIGTERM) )
 					{
+						std::cout << TColor(TColor::MAGENTA) << "Shutting down... "<<std::endl;						
 						storage.close();
 						std::exit(-1);
 					}
@@ -159,21 +161,26 @@ namespace
 	}
  };
 
-Sermon::Sermon()
+Sermon::Sermon(std::string configFile)
 {
-	std::cout << "------------------------- CONSTRUYO ------------------------: "<<this<<"\n";
-  std::string configFile;
 	mainThreadId = std::this_thread::get_id();
 	processSignals();
 	storage.setLogger(std::bind(&Sermon::say, this, std::placeholders::_1, std::placeholders::_2));
-  if (!findConfigFile(configFile))
-    throw SermonException("Config file not found!!");
-
+	if (configFile.empty())
+		{
+			if (!findConfigFile(configFile))
+				throw SermonException("Config file not found!!");
+		}
+	else
+		{
+			if (file_exists(configFile.c_str())!=1)
+				throw SermonException("There was a problem opening config file");
+		}
   std::cout << TColor(TColor::MAGENTA) << "Loading config file... "<<std::endl;
   loadConfig(configFile);
-  std::cout << TColor(TColor::MAGENTA) << "Config loaded... STARTING "<<std::endl;
+  std::cout << TColor(TColor::MAGENTA) << "Config loaded... Starting "<<std::endl;
   /* std::cout << TColor(TColor::GREEN) << "OK" << endColor << "\n"; */
-
+	__paused = false;
 }
 
 Sermon::~Sermon()
@@ -231,15 +238,6 @@ void Sermon::loadConfig(std :: string configFile)
   else
 		this->timeout = json["timeout"].get<double>();
 
-	auto storageSettings = json["storage"];
-	
-	if (!storageSettings.is_null())
-		storage.initialize(storageSettings);
-
-	auto httpapi = json["httpapi"];
-	if (!httpapi.is_null())
-		httpApi = std::make_shared<HttpApi>(*this, httpapi);
-	
   auto notify = json.find("notify");
   if ((notify != json.end()) && (notify->is_array()) )
     {
@@ -249,6 +247,14 @@ void Sermon::loadConfig(std :: string configFile)
 				}
     }
   /* debug_notifiers(); */
+	auto storageSettings = json["storage"];
+	
+	if (!storageSettings.is_null())
+		storage.initialize(storageSettings, this->notifiers);
+
+	auto httpapi = json["httpapi"];
+	if (!httpapi.is_null())
+		httpApi = std::make_shared<HttpApi>(*this, httpapi);
 
   auto services = json.find("services");
   if (services == json.end())
@@ -299,34 +305,35 @@ void Sermon::monitoring()
      could stop it from another thread. But with caution! */
   while (!__exit)
     {
-      for (auto i: this->services)
-				{
-					try
-						{
-							/* Sample error */
-							/* throw GloveException(123, "Mensaje de error"); */
-							siteProbe(i);
-							/* Just for debugging without probing sited */
-							/* if (rand()%100<50) */
-							/* 	throw GloveException(123, "Mensaje de error"); */
-							removePendingFails(i);
+			if (!paused())
+				for (auto i: this->services)
+					{
+						try
+							{
+								/* Sample error */
+								/* throw GloveException(123, "Mensaje de error"); */
+								siteProbe(i);
+								/* Just for debugging without probing sited */
+								/* if (rand()%100<50) */
+								/* 	throw GloveException(123, "Mensaje de error"); */
+								removePendingFails(i);
 
-							/* Sleep after probe */
-							/* if (this->sap) */
-							/* 	std::this_thread::sleep_for(std::chrono::milliseconds(this->sap)); */
-						}
-					catch (GloveException &e)
-						{
-							this->serviceFail(i, e.code(), e.what());
-						}
-					catch (RequestException &e)
-						{
-							this->serviceFail(i, e.code(), e.what());
-						}
-				}
+								/* Sleep after probe */
+								/* if (this->sap) */
+								/* 	std::this_thread::sleep_for(std::chrono::milliseconds(this->sap)); */
+							}
+						catch (GloveException &e)
+							{
+								this->serviceFail(i, e.code(), e.what());
+							}
+						catch (RequestException &e)
+							{
+								this->serviceFail(i, e.code(), e.what());
+							}
+					}
 
       this->say("Sleeping for " + std::to_string(this->tbp) + "milliseconds...", 2);
-
+			lastAction ("Sleeping for " + std::to_string(this->tbp) + "milliseconds...");
       std::this_thread::sleep_for(std::chrono::milliseconds(this->tbp));
       this->say("Current fails: " + std::to_string(this->currentFails.size()), 3);
     }
@@ -373,7 +380,7 @@ void Sermon::removePendingFails(const Service & s)
 		}
   fail->second.end();
 	auto dbndx = fail->second.dbndx();
-
+	lastAction ("Outage from "+serviceName+" flagged as solved");
 	storage.solveOutage(dbndx, std::chrono::system_clock::now());
 
   this->currentFails.erase(fail);
@@ -399,6 +406,10 @@ void Sermon::insertNotifier(const nlohmann::json &notifierJson)
   else if (type == "cli")
     {
       notifier = std::make_shared<NotifyCli>(NotifyCli("auto"));
+    }
+  else if (type == "webhook")
+    {
+      notifier = std::make_shared<NotifyWebhook>(NotifyWebhook("auto"));
     }
 #ifdef DESKTOP_NOTIFICATION
   else if (type == "desktop")
@@ -455,6 +466,8 @@ void Sermon::siteProbe(Sermon::Service serv)
 			client.checkCertificates(serv.checkCertificates);
 			client.maxRedirects(this->maxRedirects);
 
+			lastAction ("Connecting "+serv.url+" with timeout "+std::to_string(serv.timeout));
+			lastProbe ("Timeout: "+std::to_string(serv.timeout)+"; URL: "+serv.url);
 			this->say("Connecting "+serv.url+" with timeout "+std::to_string(serv.timeout), 2);
 			auto response = client.request(serv.url);
 
@@ -473,6 +486,7 @@ void Sermon::siteProbe(Sermon::Service serv)
     }
   catch (GloveException &e)
     {
+			lastAction ("Outage from "+serv.url+": "+e.what());			
 			throw RequestException(std::string("Connection error: ")+e.what());
 		}
 
@@ -570,7 +584,9 @@ std::vector<nlohmann::json> Sermon::currentOutages(bool allData)
 				{ "serviceName", fail.second.getServiceName() },
 				{ "bounces", std::to_string(fail.second.getBounces()) },
 				{ "code", std::to_string(fail.second.getErrorCode()) },
-				{ "startTime", timeformat(fail.second.getStartTime()) }
+				{ "startTime", timeformat(fail.second.getStartTime()) },
+				{ "message", fail.second.getLastMessage() },
+				{ "stored#id", std::to_string(fail.second.dbndx()) }
 			};
 			if (allData)
 				{
@@ -603,7 +619,112 @@ nlohmann::json Sermon::getHistoryOutage(uint64_t outageId)
 	return (outage.size())?nlohmann::json{ outage }: nlohmann::json{};		
 }
 
+void Sermon::changeOutageDescription(uint64_t outageId, std::string description)
+{
+	storage.setOutageDescription(outageId, description);
+}
+
+void Sermon::changeOutageTags(uint64_t outageId, std::string tags)
+{
+	storage.setOutageTags(outageId, tags);
+}
+
 void Sermon::setOutageStatusError(uint64_t outageId, int error)
 {
 	return storage.setOutageError(outageId, error);
+}
+
+nlohmann::json Sermon::getServiceStats(time_t from, time_t to, const std::vector<std::string>& services, const std::map<std::string, std::string>& options)
+{
+	return storage.getServiceStats(std::chrono::system_clock::from_time_t(from), std::chrono::system_clock::from_time_t(to), services, options);
+}
+
+nlohmann::json Sermon::getServiceStats(time_t from, time_t to, const uint64_t serviceId, const std::map<std::string, std::string>& options)
+{
+	nlohmann::json serviceData = storage.getServiceData(serviceId);
+	serviceData["stats"] = storage.getAllServiceStats(std::chrono::system_clock::from_time_t(from), std::chrono::system_clock::from_time_t(to), serviceId, options);
+
+	return serviceData;
+}
+
+nlohmann::json Sermon::getServicesBasicData(const std::vector<std::string>& services, const std::map<std::string, std::string>& options)
+{
+	nlohmann::json out(std::vector<std::string> {});
+	
+	auto servicesData = storage.getServicesDataByName(services);
+
+	for (auto& s : this->services)
+		{
+			/* auto serviceName = s->getServiceName(); */
+			/* auto lastMessage = s.getLastMessage(); */
+			/* auto errorCode = s.getErrorCode(); */
+			/* auto dbNdx = s.dbndx(); */
+			auto _serviceData = servicesData.find(s.name);
+			Storage::Strmap outputData = { { "url", s.url },
+							{ "name", s.name },
+							{ "timeout", std::to_string(s.timeout) },
+							{"checkCertificates", std::to_string(s.checkCertificates) } };
+			if (_serviceData != servicesData.end())
+				{
+					auto serviceData = _serviceData->second;
+					auto probeErrors = (serviceData["Probe_errors"].empty())?0:std::stoll(serviceData["Probe_errors"]);
+
+					outputData.insert( { "probe_errors", std::to_string(probeErrors) } );
+					outputData.insert( { "last_error", serviceData["Probe_err_last"] } );
+					outputData.insert( { "response", serviceData["Response_avg"]+" ("+serviceData["Response_min"]+"-"+serviceData["Response_max"]+")" } );
+				}
+			out.insert(out.end(), { outputData });
+		}
+
+	return out;
+}
+
+bool Sermon::paused()
+{
+	return __paused;
+}
+
+bool Sermon::paused(bool status)
+{
+	if (status)
+		lastAction("Sermon is now paused");
+	else
+		lastAction("Sermon is active again");
+	
+	__paused = status;
+	return __paused;
+}
+
+std::string Sermon::lastAction()
+{
+	return __lastAction;
+}
+
+std::string Sermon::lastProbe()
+{
+	return __lastProbe;
+}
+
+std::chrono::system_clock::time_point Sermon::lastActionDtm()
+{
+	return __lastActionDtm;
+}
+
+std::chrono::system_clock::time_point Sermon::lastProbeDtm()
+{
+	return __lastProbeDtm;
+}
+
+std::string Sermon::lastAction(std::string action)
+{
+	__lastActionDtm = std::chrono::system_clock::now();
+	__lastAction=action;
+	return __lastAction;
+}
+
+std::string Sermon::lastProbe(std::string probe)
+{
+	__lastProbeDtm = std::chrono::system_clock::now();
+	__lastProbe=probe;
+	return __lastProbe;
 }

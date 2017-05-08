@@ -38,9 +38,20 @@ public:
 	std::map < std::string, std::string > getByOutageId(uint64_t outageId);
 	std::map < std::string, std::string > getByOutageUuid(std::string uuid);
 	std::list <std::map < std::string, std::string > > getOutages(const std::map<std::string, std::string>& conditions);
-		
+	std::list <std::map < std::string, std::string > > getOrphanOutages(const std::map<std::string, std::string>& conditions = {});
+	std::list <std::map < std::string, std::string > > fixOrphanOutages(uint32_t newCode, const std::map<std::string, std::string>& conditions = {});
+	/* std::list <std::map < std::string, std::string > > getResponseTimeStats(const std::map<std::string, std::string>& conditions); */
+	std::map <uint64_t, std::map < std::string, std::string > > getOutageStats(const std::map<std::string, std::string>& conditions);
+	std::list <std::map < std::string, std::string > > getResponseTimeStats(const std::map<std::string, std::string>& conditions);
+	std::list <std::map<std::string, std::string> > getAllResponseTimes(const std::map<std::string, std::string>& conditions);
+	std::list <std::map<std::string, std::string> > getAllOutages(const std::map<std::string, std::string>& conditions);
+	std::map<std::string, std::map < std::string, std::string > > getServicesDataByName(const std::map<std::string, std::string>& conditions);
+	std::map < std::string, std::string > getServiceData(uint64_t serviceId);
+	void setOutageDescription(uint64_t outageId, std::string description);
+	void setOutageTags(uint64_t outageId, std::string tags);
 private:
 	sqlite3* db;
+	bool _readonly;
 	std::map<std::string, std::string> statusTable;
 	std::map<std::string, uint64_t> servicesTable;
 	
@@ -53,6 +64,7 @@ private:
 	long unsigned getRowid(std::string table, std::list <std::pair < std::string, std::string> > conditions);
   long unsigned insert(std::string table, std::map<std::string, std::string> fields, bool clean=true);
   long unsigned update(std::string table, long unsigned rowid, std::map<std::string, std::string> fields, bool clean=true);
+  long unsigned update(std::string table, std::map<std::string, std::string> fields, std::list <std::pair < std::string, std::string> > conditions = {}, bool clean=true);
 	long unsigned destroy(std::string table, long unsigned rowid);
   long unsigned destroy(std::string table, std::list <std::pair < std::string, std::string> > conditions, std::string extra="");
   std::list <std::map < std::string, std::string > > getData(std::string table, std::string fields, std::list <std::pair < std::string, std::string> > conditions = {}, std::string extra="");
@@ -65,4 +77,5 @@ private:
 	uint64_t bounceOutage(uint64_t outageId, std::chrono::system_clock::time_point tm);
 	void flagOutageAsSolved(uint64_t outageId, std::chrono::system_clock::time_point tm);
 	void flagOutageAsError(uint64_t outageId, std::chrono::system_clock::time_point tm, int error);
+	uint64_t doFixOrphanOutages(int32_t newCode);
 };

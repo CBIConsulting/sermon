@@ -24,6 +24,7 @@ SRCFILES =  sermon_app.cpp 	\
 	httpapi.cpp								\
 	notifymail.cpp						\
 	notifycli.cpp							\
+	notifywebhook.cpp					\
 	service_fail.cpp					\
 	lib/cfileutils.cpp 				\
 	lib/timeutils.cpp					\

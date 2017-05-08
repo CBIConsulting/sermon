@@ -1,17 +1,22 @@
-El objeto ServiceFail podría recibir también la información completa del servicio, así
-como el Engine de datos (El Engine podría sacarlo de un objeto global tipo App::Engine())
+ServiceFail object could alse receive full service info and data engine. Doing so
+ServiceFail object would create database entries. And Sermon_app doesn't have
+to do so many things.
 
-De esta manera, sería el ServiceFail el que haría los avisos y las entradas en base de datos.
-Además, podríamos configurar los avisos a un número determinado de bounces.
+*******
 
-Así hacemos que Sermon_app no tenga que controlar tantas cosas y todo vaya por detrás.
-****
-En las funciones de base de datos, los IDs devueltos deben ser uint64_t
+All DB IDs MUST be uint64_t (some are int and long int)
 
-****
-En configuración, que podamos desactivar logeo de outages o logeo de responsetimes
+*******
 
-******
-ServiceFail->end() podría lanzarse en otro thread separado, así mientras se envían los mails
-el programa puede continuar. Debería copiarse todo en otra clase, porque puede que el objeto
-sea destruido mientras se envian los e-mails
+Make it possible to enable/disable outage and response time logs.
+
+*******
+
+ServiceFail->send() could be called from another thread. So, while e-mails and notifications
+are being sent, we can carry on checking services. Everything should be copied to another class,
+because the object may be destroyed while sending e-mails and can cause corruption.
+
+*******
+
+Emails delayed notifications. Wait a few seconds before sending e-mail notifications. Sometimes,
+some services may fail at the same time and we can send just one mail instead of N mails.

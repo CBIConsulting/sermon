@@ -34,15 +34,20 @@ HttpApi::HttpApi(Sermon& sermon, const nlohmann::json &settings):sermon(sermon)
 			
 	server = std::make_shared<GloveHttpServer>();
 	server->addRoute("/", HttpApi::index);
+	server->addRest("/sermon/status", 0, GloveHttpServer::jsonApiErrorCall,
+									(GloveHttpServer::url_callback)std::bind(&HttpApi::sermonStatus, this, std::placeholders::_1, std::placeholders::_2),
+									(GloveHttpServer::url_callback)std::bind(&HttpApi::sermonStatusPost, this, std::placeholders::_1, std::placeholders::_2)
+	);
 	server->addRest("/services/basic", 0, GloveHttpServer::jsonApiErrorCall,
 									(GloveHttpServer::url_callback)std::bind(&HttpApi::servicesBasicData, this, std::placeholders::_1, std::placeholders::_2));
-	server->addRest("/response/stats", 0, GloveHttpServer::jsonApiErrorCall,
+	server->addRest("/response/stats/$id", 0, GloveHttpServer::jsonApiErrorCall,
 									(GloveHttpServer::url_callback)std::bind(&HttpApi::responseStats, this, std::placeholders::_1, std::placeholders::_2));
 	server->addRest("/errors/realtime", 0, GloveHttpServer::jsonApiErrorCall,
 									(GloveHttpServer::url_callback)std::bind(&HttpApi::realtimeErrors, this, std::placeholders::_1, std::placeholders::_2));
 	server->addRest("/errors/history/$id", 0, GloveHttpServer::jsonApiErrorCall,
 									(GloveHttpServer::url_callback)std::bind(&HttpApi::historyErrorsGet, this, std::placeholders::_1, std::placeholders::_2),
-									(GloveHttpServer::url_callback)std::bind(&HttpApi::historyErrorsPost, this, std::placeholders::_1, std::placeholders::_2));
+									(GloveHttpServer::url_callback)std::bind(&HttpApi::historyErrorsPost, this, std::placeholders::_1, std::placeholders::_2)
+	);
 
 	server->listen(port, listen);
 	server->tmcReject(true, max_accepted_clients, "Too many connections");
@@ -81,6 +86,7 @@ void HttpApi::historyErrorsGet(GloveHttpRequest& request, GloveHttpResponse& res
 	auto output = args["output"];
 	if (output.empty())
 		output="json";
+	auto showOutageIds = (args["showOutageIds"] == "1");
 	
 	std::string  _services = args["services"];
 	GCommon::trim(_services);
@@ -251,7 +257,9 @@ void HttpApi::historyErrorsGet(GloveHttpRequest& request, GloveHttpResponse& res
 								_flags->second|=1;
 							else if (solved==-1)
 								_flags->second|=2;
-								
+
+							if (showOutageIds)
+								response << "#" << outageId << "\t";
 							response << "["<<tostr<<"] ("<<ou["Service_name"].get<std::string>()<<") ";
 							if (solved>0)
 								response <<ou["description"].get<std::string>()<<" from "<<fromstr<<" to "<<tostr<<" ("<<itemized_to_str_num(get_itemized(std::chrono::seconds(_totaltime)), false)<<") "<<userdes<<"\n";
@@ -263,7 +271,7 @@ void HttpApi::historyErrorsGet(GloveHttpRequest& request, GloveHttpResponse& res
 					/* Total downtime: FALTA CALCULARLO */
 					for (auto tdt : totalDowntime)
 						{
-							if (tdt.second > 0)
+							if (tdt.second >= 0)
 								{
 									response << serviceNames[tdt.first] << std::endl;
 									response << "  Total downtime "<< put_time("%d/%b/%Y %H:%M:%S", from)<<
@@ -292,15 +300,232 @@ void HttpApi::historyErrorsGet(GloveHttpRequest& request, GloveHttpResponse& res
 
 void HttpApi::historyErrorsPost(GloveHttpRequest& request, GloveHttpResponse& response)
 {
+	try
+		{
+			auto reqdata = nlohmann::json::parse(request.getData());
+			auto id = request.special["id"];	
+
+			if (id.empty())
+				throw SermonException("You must insert an #id or uuid", 999); 
+
+			nlohmann::json _data;
+
+			if (!GCommon::isNumeric(id))
+				_data = sermon.getHistoryOutage(id);
+			else
+				_data = sermon.getHistoryOutage(std::stoll(id));
+
+			if (_data.is_null())
+				throw SermonException("Outage not found", 999); 
+
+			auto data = _data[0];
+			
+			auto out = outputTemplate("errors/history", "post", "");
+			auto userdes = reqdata["userdes"];
+			auto tags = reqdata["tags"];
+
+			if (!userdes.is_null())
+				{
+					if (!userdes.is_string())
+						throw SermonException("User description is not a string!!", 999);
+
+					sermon.changeOutageDescription(std::stoll(data["Id"].get<std::string>()), userdes.get<std::string>());
+				}
+
+			if (!tags.is_null())
+				{
+					if (!tags.is_string())
+						throw SermonException("Tags field is not a string!!", 999);
+					
+					sermon.changeOutageDescription(std::stoll(data["Id"].get<std::string>()), tags.get<std::string>());
+				}
+			
+			out["data"] = data;
+			response << out.dump(2);
+		}
+	catch (std::exception& e)
+		{
+			auto out = outputTemplate("errors/history", "post", "Bad request: "+std::string(e.what()));
+			response << out.dump(2);
+		}	
+	/* Modify notes */
 }
 
 void HttpApi::servicesBasicData(GloveHttpRequest& request, GloveHttpResponse& response)
 {
+	/* Service id, Service name, probe errors, last probe, last status, configuration data */
+	auto args = request.getUri().arguments;
+	auto _from = args["from"];
+	auto _to = args["to"];
+	auto output = args["output"];
+	if (output.empty())
+		output="json";
+	
+	std::string  _services = args["services"];
+	GCommon::trim(_services);
+	
+	std::vector<std::string> services;
+	if (!_services.empty())
+		{
+			auto __services = GCommon::tokenize(_services, ',');
+			std::copy(__services.begin(), __services.end(), std::inserter(services, services.end()));
+		}
+
+	nlohmann::json out;
+	try
+		{
+			auto data = sermon.getServicesBasicData(services, {});
+			if (output == "json")
+				{
+					out = outputTemplate("services/basic", "get", "");
+					out["data"] = data;
+					response << out.dump(2);
+				}
+			else
+				throw SermonException("No more output methods implemented", 999); 
+
+		}
+	catch (std::exception& e)
+		{
+			out = outputTemplate("services/basic", "get", "Error: "+std::string(e.what()));
+			response << out.dump(2);
+		}
+	
+}
+
+void HttpApi::sermonStatusPost(GloveHttpRequest& request, GloveHttpResponse& response)
+{
+	try
+		{
+			auto reqdata = nlohmann::json::parse(request.getData());
+			std::vector < std::string > messages;
+			
+			if (reqdata["paused"].is_boolean())
+				{
+					sermon.paused(reqdata["paused"].get<bool>());
+					messages.push_back("Sermon paused changed to "+std::to_string(reqdata["paused"].get<bool>()));
+				}
+			auto out = outputTemplate("sermon/status", "post", "");
+			if (messages.size()==0)
+				out["message"] = "No changes made";
+			else
+				out["data"] = messages;
+			
+			response << out.dump(2);
+		}
+	catch (std::exception& e)
+		{
+			auto out = outputTemplate("sermon/status", "post", "Bad request: "+std::string(e.what()));
+			response << out.dump(2);
+		}
+}
+
+void HttpApi::sermonStatus(GloveHttpRequest& request, GloveHttpResponse& response)
+{
+	auto out = outputTemplate("sermon/status", "get", "");
+	out["data"] = {
+		{ "paused", sermon.paused() },
+		{ "last_action", sermon.lastAction() },
+		{ "last_action_dtm", put_time("%d/%m/%Y %H:%M:%S", std::chrono::system_clock::to_time_t(sermon.lastActionDtm())) },
+		{ "last_probe", sermon.lastProbe() },
+		{ "last_probe_dtm", put_time("%d/%m/%Y %H:%M:%S", std::chrono::system_clock::to_time_t(sermon.lastProbeDtm())) }
+	};
+	response << out.dump(2);
 }
 
 /* Min. Max. Avg response time */
 void HttpApi::responseStats(GloveHttpRequest& request, GloveHttpResponse& response)
 {
+	auto args = request.getUri().arguments;
+	auto _from = args["from"];
+	auto _to = args["to"];
+	auto output = args["output"];
+	if (output.empty())
+		output="json";
+	auto id = request.special["id"];	
+
+	time_t from = (!_from.empty())?parseTime(_from):10000, /* by default a date in the past*/
+		to = (!_to.empty())?parseTime(_to):parseTime("now");
+
+	nlohmann::json out;
+	try
+		{
+			std::string  _services = args["services"];
+			if ( (!_services.empty()) && (!id.empty()) )
+		
+				GCommon::trim(_services);
+	
+			std::vector<std::string> services;
+			if (!_services.empty())
+				{
+					auto __services = GCommon::tokenize(_services, ',');
+					/* services.emplace_back(std::move(__services.front())); */
+					std::copy(__services.begin(), __services.end(), std::inserter(services, services.end()));
+				}
+
+
+			if ( (!id.empty()) && (!services.empty()) )
+				throw SermonException("Use services attribute or service Id, not both", 999); 
+
+			nlohmann::json data;
+			if (!id.empty())
+				data = sermon.getServiceStats(from, to, std::stoll(id));
+			else
+				data = sermon.getServiceStats(from, to, services, {});
+			if (output == "json")
+				{
+					out = outputTemplate("response/stats", "get", "");
+					out["data"] = data;
+					response << out.dump(2);
+				}
+			else if (output=="csv")
+				{
+					if (!id.empty())
+						{
+							response << "# Time; Response time\n";
+							auto& resdata = data["stats"]["response"];
+							/* En el futuro podemos hacerlo para los outages, los recovery times y demás, pero por ahora sólo está para esto */
+							for (auto d: resdata)
+								{
+									response << d["Probe_dtm"]<<";"<<d["time"]<<"\n";
+								}
+							/* Only one service */
+						}
+					else
+						{
+							/* Multiple services */
+							response << "Service ID;Service name;Time start;Time End;Response avg;"
+								"Response min;Response max;Probe errors;Probe_err_first;Probe_err_last;"
+								"Outtime_avg;Outtime_max;Outtime_min;Outtimes_count;Outages_start;Outages_end\n";
+							for (auto d: data)
+								{
+									response << std::stoll(d["Service_id"].get<std::string>())<<";";
+									response << d["Service_name"]<<";";
+									response << ((d["Time_start"].is_null())?"":d["Time_start"])<< ";";
+									response << ((d["Time_end"].is_null())?d["Time_end"]:"")<< ";";
+									response << ((d["Response_avg"].is_null())?"":d["Response_avg"])<< ";";
+									response << ((d["Response_min"].is_null())?"":d["Response_min"])<< ";";
+									response << ((d["Response_max"].is_null())?"":d["Response_max"])<< ";";
+									response << ((d["Probe_errors"].is_null())?0:std::stoll(d["Probe_errors"].get<std::string>()))<< ";";
+									response << ((d["Probe_err_first"].is_null())?"":d["Probe_err_first"])<< ";";
+									response << ((d["Probe_err_last"].is_null())?"":d["Probe_err_last"])<< ";";
+									response << ((d["Outtime_avg"].is_null())?"":d["Outtime_avg"])<< ";";
+									response << ((d["Outtime_max"].is_null())?"":d["Outtime_max"])<< ";";
+									response << ((d["Outtime_min"].is_null())?"":d["Outtime_min"])<< ";";
+									response << ((d["Outtimes_count"].is_null())?0:std::stoll(d["Outtimes_count"].get<std::string>()))<< ";";
+									response << ((d["Outages_start"].is_null())?"":d["Outages_start"])<< ";";
+									response << ((d["Outages_end"].is_null())?"":d["Outages_end"])<< ";";							
+									response << "\n";
+								}
+						}
+				}
+
+		}
+	catch (std::exception& e)
+		{
+			out = outputTemplate("response/stats", "get", "Error: "+std::string(e.what()));
+			response << out.dump(2);
+		}
 }
 
 void HttpApi::index(GloveHttpRequest& request, GloveHttpResponse& response)

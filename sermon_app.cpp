@@ -51,7 +51,7 @@ namespace
   const std::string white_spaces( " \f\n\r\t\v" );
 	Storage storage;
 	std::shared_ptr<HttpApi> httpApi;
-	
+
   /* Default config values as numbers */
   std::map<std::string, long> defaultNumbers = { {"tbp", 1}, {"sap", 100 }, { "verbosity", 1}, {"max_redirects", 10} };
   bool defaultCheckCertificate = true;
@@ -123,7 +123,7 @@ namespace
     std::string::size_type colon;
     std::string::size_type crlf;
 
-    if ( ( colon = input.find(':', start) ) != std::string::npos && 
+    if ( ( colon = input.find(':', start) ) != std::string::npos &&
 				 ( ( crlf = input.find(GloveDef::CRLF, start) ) != std::string::npos ) )
       {
 				if (crlf<colon)
@@ -145,7 +145,7 @@ namespace
 			{
 				if ( (signum == SIGINT) || (signum == SIGQUIT) || (signum == SIGTERM) )
 					{
-						std::cout << TColor(TColor::MAGENTA) << "Shutting down... "<<std::endl;						
+						std::cout << TColor(TColor::MAGENTA) << "Shutting down... "<<std::endl;
 						storage.close();
 						std::exit(-1);
 					}
@@ -153,7 +153,7 @@ namespace
 
 		signal(signum, receivedSignal);
 	}
-	
+
 	void processSignals()
 	{
 		if (signal(SIGINT, receivedSignal) == SIG_ERR)
@@ -239,6 +239,7 @@ void Sermon::loadConfig(std :: string configFile)
 		this->timeout = json["timeout"].get<double>();
 
   auto notify = json.find("notify");
+
   if ((notify != json.end()) && (notify->is_array()) )
     {
       for (auto i : *notify)
@@ -246,9 +247,11 @@ void Sermon::loadConfig(std :: string configFile)
 					insertNotifier(i);
 				}
     }
+
+
   /* debug_notifiers(); */
 	auto storageSettings = json["storage"];
-	
+
 	if (!storageSettings.is_null())
 		storage.initialize(storageSettings, this->notifiers);
 
@@ -356,7 +359,7 @@ void Sermon::serviceFail(const Service & s, int code, const std :: string & mess
 			return;			/* If error found, end up here*/
 		}
 	currentFails_mutex.unlock();
-	
+
 	auto url = s.url;
 	auto dbId = storage.addOutage(url, tpoint, message+std::string(" (")+std::to_string(code)+")");
 	/* std::cout << "BOUNCE ID: "<<dbId<<"\n"; */
@@ -399,6 +402,7 @@ void Sermon::insertNotifier(const nlohmann::json &notifierJson)
 				options[i.key()] = i.value().get<std::string>();
     }
   std::shared_ptr<Notify> notifier;
+
   if (type == "mail")
     {
       notifier = std::make_shared<NotifyMail>(NotifyMail("auto"));
@@ -478,7 +482,7 @@ void Sermon::siteProbe(Sermon::Service serv)
 			/* int status = getUrlData(serv.url, contents, serv.timeout, serv.checkCertificates, this->maxRedirects); */
 			/* std::cout << "Final status: "<<status<<"\n"; */
 			this->say("Return status: "+std::to_string(status), 3);
-			
+
 			if (status != 200)
 				throw RequestException("Site returned invalid status code: "+std::to_string(status));
 
@@ -486,7 +490,7 @@ void Sermon::siteProbe(Sermon::Service serv)
     }
   catch (GloveException &e)
     {
-			lastAction ("Outage from "+serv.url+": "+e.what());			
+			lastAction ("Outage from "+serv.url+": "+e.what());
 			throw RequestException(std::string("Connection error: ")+e.what());
 		}
 
@@ -579,7 +583,7 @@ std::vector<nlohmann::json> Sermon::currentOutages(bool allData)
 	std::lock_guard<std::mutex> lock (currentFails_mutex);
 
 	for (auto fail : this->currentFails)
-		{			
+		{
 			Storage::Strmap failData = {
 				{ "serviceName", fail.second.getServiceName() },
 				{ "bounces", std::to_string(fail.second.getBounces()) },
@@ -606,17 +610,17 @@ nlohmann::json Sermon::getHistoryOutages(time_t from, time_t to, const std::vect
 {
 	return storage.getHistoryOutages(std::chrono::system_clock::from_time_t(from), std::chrono::system_clock::from_time_t(to), services, options);
 }
-	
+
 nlohmann::json Sermon::getHistoryOutage(std::string uuid)
 {
 	auto outage = storage.getOutageByUuid(uuid);
-	return (outage.size())?nlohmann::json{ outage }: nlohmann::json{};		
+	return (outage.size())?nlohmann::json{ outage }: nlohmann::json{};
 }
 
 nlohmann::json Sermon::getHistoryOutage(uint64_t outageId)
 {
 	auto outage = storage.getOutageById(outageId);
-	return (outage.size())?nlohmann::json{ outage }: nlohmann::json{};		
+	return (outage.size())?nlohmann::json{ outage }: nlohmann::json{};
 }
 
 void Sermon::changeOutageDescription(uint64_t outageId, std::string description)
@@ -650,7 +654,7 @@ nlohmann::json Sermon::getServiceStats(time_t from, time_t to, const uint64_t se
 nlohmann::json Sermon::getServicesBasicData(const std::vector<std::string>& services, const std::map<std::string, std::string>& options)
 {
 	nlohmann::json out(std::vector<std::string> {});
-	
+
 	auto servicesData = storage.getServicesDataByName(services);
 
 	for (auto& s : this->services)
@@ -690,7 +694,7 @@ bool Sermon::paused(bool status)
 		lastAction("Sermon is now paused");
 	else
 		lastAction("Sermon is active again");
-	
+
 	__paused = status;
 	return __paused;
 }

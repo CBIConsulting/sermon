@@ -14,12 +14,11 @@ void Storage::initialize(const nlohmann::json &settings, std::vector<std::shared
 {
 	if ( (settings.find("enabled") == settings.end()) || (!settings["enabled"].get<bool>()) )
 		return;
-
 	this->notifiers = notifiers;
-	
+
 	logger("Initializing storage", 5);
 
-	std::string engine;	
+	std::string engine;
 	if (settings.find("engine") != settings.end())
 		engine = settings["engine"].get<std::string>();
 
@@ -33,6 +32,7 @@ void Storage::initialize(const nlohmann::json &settings, std::vector<std::shared
 		throw SermonException("No valid storage engine "+engine);
 
 	fixOrphanOutages();
+
 	_initialized = true;
 }
 
@@ -47,15 +47,15 @@ void Storage::fixOrphanOutages()
 					auto serviceName = (ou["Service_name"].empty())?"FAILED TO GET SERVICE NAME":ou["Service_name"];
 					auto outageTime =  (ou["created_dtm"].empty())?"FAILED TO GET OUTAGE TIME":put_time("%d/%m/%Y %H:%M:%S", parseTime(ou["created_dtm"]));
 					auto subject = (ou["description"].empty())?"FAILED TO GET OUTAGE DESCRIPTION":ou["description"];
-					
+
 					n->newMessage("warning", serviceName,
 												std::chrono::system_clock::now(),
 												"Site outage from "+outageTime+" with subject "+subject+" flagged as Probe error");
 				}
-			
+
 		}
-			for (auto n : notifiers)
-	n->newMessage("warning", "", std::chrono::system_clock::now(), "Sample notification");
+	/* 		for (auto n : notifiers) */
+	/* n->newMessage("warning", "", std::chrono::system_clock::now(), "Sample notification"); */
 }
 
 void Storage::logger(std::string what, int verbosity)
@@ -83,7 +83,7 @@ uint64_t Storage::addOutage(std::string& service, std::chrono::system_clock::tim
 		{
 			return _engine->addOutage(service, tm, description);
 		}
-	return 0;	
+	return 0;
 }
 
 void Storage::addBounce(uint64_t dbId, std::chrono::system_clock::time_point tm)
@@ -91,9 +91,9 @@ void Storage::addBounce(uint64_t dbId, std::chrono::system_clock::time_point tm)
 	if (!initialized())
 		return;
 
-	logger("Bounce #"+std::to_string(dbId), 2);	
+	logger("Bounce #"+std::to_string(dbId), 2);
 	_engine->addBounce(dbId, tm);
-	
+
 	if ( (dbId==0) || (dbId==std::numeric_limits<uint64_t>::max()) )
 		return;											/* Bad bounce number or no db. */
 }
@@ -116,7 +116,7 @@ void Storage::setOutageError(uint64_t dbId, int val)
 
 	if (val>=0)										/* Bad error */
 		return;
-	
+
 	if ( (dbId==0) || (dbId==std::numeric_limits<uint64_t>::max()) )
 		return;											/* Bad bounce number or no db. */
 
@@ -143,7 +143,7 @@ void Storage::setOutageDescription(uint64_t outageId, std::string description)
 {
 	if (!initialized())
 		return;
-	std::cout << "COD1\n";
+
 	_engine->setOutageDescription(outageId, description);
 }
 
@@ -164,10 +164,10 @@ std::list<Storage::Strmap> Storage::getHistoryOutages(std::chrono::system_clock:
 	auto _limit = options.find("limit");
 	if (_limit != options.end())
 		conditions["limit"]= _limit->second;
-	
+
 	if (services.size()>0)
 		conditions.insert({ "services", GCommon::implode(services, ",")});
-	
+
 	auto outages = _engine->getOutages(conditions);
 	return outages;
 }
@@ -180,7 +180,7 @@ std::list<Storage::Strmap> Storage::getServiceStats(std::chrono::system_clock::t
 	};
 	if (services.size()>0)
 		conditions.insert({ "services", GCommon::implode(services, ",")});
-		
+
 	auto responseTimes = _engine->getResponseTimeStats(conditions);
 	auto outages = _engine->getOutageStats(conditions);
 
@@ -188,6 +188,7 @@ std::list<Storage::Strmap> Storage::getServiceStats(std::chrono::system_clock::t
 	for (auto &r : output)
 		{
 			auto id = std::stoll(r["Service_id"]);
+			r["Service_id"] = std::to_string(id); /* Fix ID representation */
 			if (outages.find(id) != outages.end())
 				{
 					Storage::Strmap outagesdata = outages[id];
@@ -222,7 +223,7 @@ std::map<std::string, std::list<Storage::Strmap>> Storage::getAllServiceStats(st
 	};
 
 	conditions.insert({ "Service_id", std::to_string(serviceId)});
-		
+
 	auto responseTimes = _engine->getAllResponseTimes(conditions);
 	auto outages = _engine->getAllOutages(conditions);
 
@@ -238,6 +239,6 @@ std::map<std::string, std::string> Storage::getServiceData(const uint64_t servic
 	auto output = _engine->getServicesDataByName(conditions);
 	if (output.empty())
 		return {};
-	
-	return output.begin()->second;	
+
+	return output.begin()->second;
 }

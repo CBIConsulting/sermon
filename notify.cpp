@@ -71,7 +71,7 @@ void Notify::parseSpecialOptions()
 	if (_enabled != this->option.end())
 		{
 			auto __enabled = GCommon::uppercase(_enabled->second);
-			
+
 			if ( (__enabled == "0") || (__enabled=="NO") || (__enabled=="FALSE") )
 				enabled = false;
 		}
@@ -84,7 +84,7 @@ uint32_t Notify::enabledNotificationType(const std::string& type)
 	return (typeEnabled!=enabledTypes.end())?typeEnabled->second:defaultEnabledType;
 }
 
-Notify::Notify(Notify && n) noexcept : id(std::move(n.id)), type(std::move(n.type)), option(std::move(n.option)) 
+Notify::Notify(Notify && n) noexcept : id(std::move(n.id)), type(std::move(n.type)), option(std::move(n.option))
 {
 }
 
@@ -99,7 +99,7 @@ void Notify::newFail(const std::string& serviceName, std::chrono::system_clock::
 {
 	if (!enabled)
 		return;
-	
+
 	if (enabledNotificationType("outage"))
 		_newFail(serviceName, outageStart, code, message);
 }
